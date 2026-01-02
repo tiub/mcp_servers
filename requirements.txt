@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+mcp[cli]
+python-dotenv
+pygithub
+gitpython
+pyjwt
+redis
+pytest
+pytest-asyncio
+jose
+passlib[bcrypt]

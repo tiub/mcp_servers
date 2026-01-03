@@ -8,5 +8,5 @@ pyjwt
 redis
 pytest
 pytest-asyncio
-jose
+python-jose
 passlib[bcrypt]

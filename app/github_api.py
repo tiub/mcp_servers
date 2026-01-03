@@ -31,7 +31,14 @@ class GitHubAPI:
         self.token = token or settings.GITHUB_TOKEN
         self.auth = Auth.Token(self.token)
         # 禁用SSL验证（仅用于开发环境）
-        self.github = Github(auth=self.auth, base_url=settings.GITHUB_API_URL, verify=False)
+        # 优化：添加超时设置和缓存
+        self.github = Github(
+            auth=self.auth, 
+            base_url=settings.GITHUB_API_URL, 
+            verify=False,
+            timeout=15,  # 设置15秒超时，避免长时间等待
+            per_page=100  # 默认每页100个结果，减少API调用次数
+        )
     
     def get_user(self):
         """
@@ -55,51 +62,55 @@ class GitHubAPI:
         """
         return self.github.get_repo(f"{owner}/{repo}")
     
-    def list_repos(self, owner: str, per_page: int = 30) -> List[Dict[str, Any]]:
+    def list_repos(self, owner: str, per_page: int = 30, page: int = 1) -> Dict[str, Any]:
         """
-        列出指定所有者的仓库
+        列出指定所有者的仓库，支持分页
         
         Args:
             owner: 仓库所有者
-            per_page: 每页数量
+            per_page: 每页数量（最大100）
+            page: 页码
         
         Returns:
-            仓库列表，包含仓库元数据
+            包含仓库列表和分页信息的字典
         """
-        print(f"🔍 Listing repos for owner: {owner}")
-        
-        # 调试：先打印当前认证用户
-        current_user = self.github.get_user()
-        print(f"   Current authenticated user: {current_user.login}")
-        
-        # 获取指定所有者的用户对象
-        user = self.github.get_user(owner)
-        print(f"   Target user: {user.login}")
-        
-        # 获取仓库列表
-        repos = user.get_repos()
-        repos.per_page = per_page
-        
-        # 调试：打印仓库数量
-        repo_list = list(repos)
-        print(f"   Found {len(repo_list)} repos for {owner}")
-        
-        # 返回仓库列表
-        result = []
-        for repo in repo_list:
-            repo_info = {
-                "name": repo.name,
-                "full_name": repo.full_name,
-                "description": repo.description,
-                "url": repo.html_url,
-                "stars": repo.stargazers_count,
-                "forks": repo.forks_count,
-                "created_at": repo.created_at.isoformat()
+        try:
+            # 获取指定所有者的用户对象
+            user = self.github.get_user(owner)
+            
+            # 获取仓库列表，设置per_page
+            repos = user.get_repos()
+            repos.per_page = min(per_page, 100)  # GitHub API限制最大为100
+            
+            # 只获取当前页的仓库，不一次性获取所有
+            current_page_repos = repos.get_page(page - 1)
+            
+            # 转换为列表
+            repo_list = list(current_page_repos)
+            
+            # 处理仓库列表
+            result = []
+            for repo in repo_list:
+                result.append({
+                    "name": repo.name,
+                    "full_name": repo.full_name,
+                    "description": repo.description,
+                    "url": repo.html_url,
+                    "stars": repo.stargazers_count,
+                    "forks": repo.forks_count,
+                    "created_at": repo.created_at.isoformat()
+                })
+            
+            return {
+                "success": True,
+                "owner": owner,
+                "page": page,
+                "per_page": repos.per_page,
+                "total_count": repos.totalCount,
+                "repos": result
             }
-            result.append(repo_info)
-            print(f"   - Repo: {repo.full_name}")
-        
-        return result
+        except Exception as e:
+            raise ValueError(f"Failed to list repos: {str(e)}")
     
     def get_branches(self, owner: str, repo: str) -> List[str]:
         """
@@ -249,6 +260,133 @@ class GitHubAPI:
             "deletions": comparison.deletions,
             "files": [{"filename": file.filename, "status": file.status} for file in comparison.files]
         }
+    
+    def search_code(self, query: str, language: Optional[str] = None, per_page: int = 30, page: int = 1) -> Dict[str, Any]:
+        """
+        搜索GitHub公共库中的代码，支持GitHub搜索表达式
+        
+        Args:
+            query: 搜索查询字符串，支持GitHub搜索表达式
+            language: 过滤特定语言（可选）
+            per_page: 每页结果数（最大100）
+            page: 页码
+        
+        Returns:
+            搜索结果，包含匹配的代码片段列表
+        """
+        import time
+        import hashlib
+        import asyncio
+        import logging
+        
+        # 获取或创建logger
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # 构建搜索查询
+            search_query = query
+            
+            # 只有当language被提供且query中不包含language过滤时才添加
+            if language and "language:" not in query.lower():
+                search_query += f" language:{language}"
+            
+            # 限制每页结果数，避免超时
+            per_page = min(per_page, 50)  # 进一步限制每页结果数，降低超时风险
+            
+            # 生成缓存键
+            cache_key = hashlib.md5(f"{search_query}_{per_page}_{page}".encode()).hexdigest()
+            
+            # 检查缓存
+            # 注意：这里可以替换为更持久的缓存实现，如Redis
+            if hasattr(self, '_search_cache'):
+                if cache_key in self._search_cache:
+                    cached_result = self._search_cache[cache_key]
+                    if time.time() - cached_result['timestamp'] < 3600:  # 缓存1小时
+                        return cached_result['data']
+            else:
+                self._search_cache = {}
+            
+            # 执行搜索，添加超时保护
+            start_time = time.time()
+            
+            # 执行搜索
+            results = self.github.search_code(search_query)
+            results.per_page = per_page  # GitHub API限制最大为100
+            
+            # 直接使用get_page返回的迭代器，避免立即获取所有结果
+            code_results = []
+            
+            # 只获取当前页的结果，不触发额外API调用
+            # 添加超时保护，单个搜索请求最多执行10秒
+            for i, result in enumerate(results.get_page(page - 1)):
+                # 检查是否超时
+                if time.time() - start_time > 10:
+                    logger.warning(f"Search timed out after 10 seconds, returning partial results ({len(code_results)} items)")
+                    break
+                
+                # 限制单个页面的结果数量，避免处理时间过长
+                if len(code_results) >= per_page:
+                    break
+                
+                # 获取text_matches，确保它是可迭代的
+                text_matches = getattr(result, 'text_matches', [])
+                if text_matches is None:
+                    text_matches = []
+                    
+                # 从result.html_url中提取仓库信息，避免触发额外API调用
+                # URL格式：https://github.com/{owner}/{repo}/blob/{ref}/{path}
+                import re
+                repo_match = re.match(r'https://github.com/([^/]+)/([^/]+)/', result.html_url)
+                repo_full_name = None
+                owner = None
+                
+                if repo_match:
+                    owner = repo_match.group(1)
+                    repo_name = repo_match.group(2)
+                    repo_full_name = f"{owner}/{repo_name}"
+                
+                # 注意：避免访问result.repository，这会触发额外的API调用
+                code_results.append({
+                    "name": result.name,
+                    "path": result.path,
+                    "sha": result.sha,
+                    "url": result.html_url,
+                    "repository": repo_full_name,
+                    "owner": owner,
+                    "language": result.language,  # 直接从result获取language，避免访问repository
+                    "score": result.score,
+                    "text_matches": [match.text for match in text_matches[:3]]  # 只返回前3个匹配文本，减少数据量
+                })
+            
+            # 构建结果
+            result_data = {
+                "success": True,
+                "query": search_query,
+                "page": page,
+                "per_page": per_page,
+                "items_count": len(code_results),
+                "items": code_results,
+                "execution_time": time.time() - start_time
+            }
+            
+            # 缓存结果
+            self._search_cache[cache_key] = {
+                'timestamp': time.time(),
+                'data': result_data
+            }
+            
+            # 限制缓存大小
+            if len(self._search_cache) > 100:
+                # 移除最旧的缓存
+                oldest_key = min(self._search_cache.keys(), key=lambda k: self._search_cache[k]['timestamp'])
+                del self._search_cache[oldest_key]
+            
+            return result_data
+        except asyncio.TimeoutError:
+            raise ValueError("Search timed out: GitHub API response took too long")
+        except Exception as e:
+            logger.error(f"Search failed: {type(e).__name__}: {str(e)}")
+            raise ValueError(f"Failed to search code: {str(e)}")
 
 
 # 创建全局GitHub API实例
@@ -345,16 +483,23 @@ except Exception as e:
                     return MockComparison()
             return MockRepo()
         
-        def list_repos(self, owner: str, per_page: int = 30) -> List[Dict[str, Any]]:
-            return [{
-                "name": "mock-repo",
-                "full_name": f"{owner}/mock-repo",
-                "description": "Mock repository",
-                "url": f"https://github.com/{owner}/mock-repo",
-                "stars": 0,
-                "forks": 0,
-                "created_at": "2023-01-01T00:00:00Z"
-            }]
+        def list_repos(self, owner: str, per_page: int = 30, page: int = 1) -> Dict[str, Any]:
+            return {
+                "success": True,
+                "owner": owner,
+                "page": page,
+                "per_page": per_page,
+                "total_count": 1,
+                "repos": [{
+                    "name": "mock-repo",
+                    "full_name": f"{owner}/mock-repo",
+                    "description": "Mock repository",
+                    "url": f"https://github.com/{owner}/mock-repo",
+                    "stars": 0,
+                    "forks": 0,
+                    "created_at": "2023-01-01T00:00:00Z"
+                }]
+            }
         
         def get_branches(self, owner: str, repo: str) -> List[str]:
             return ["main", "develop"]
@@ -395,6 +540,42 @@ except Exception as e:
                 "additions": 10,
                 "deletions": 5,
                 "files": []
+            }
+        
+        def search_code(self, query: str, language: Optional[str] = None, per_page: int = 30, page: int = 1) -> Dict[str, Any]:
+            """
+            模拟搜索GitHub公共库中的代码，支持GitHub搜索表达式
+            """
+            # 构建搜索查询
+            search_query = query
+            if language and "language:" not in query.lower():
+                search_query += f" language:{language}"
+            
+            # 模拟真实分页，根据page和per_page返回不同结果
+            mock_items = []
+            base_item_count = (page - 1) * per_page
+            
+            for i in range(per_page):
+                item_index = base_item_count + i
+                mock_items.append({
+                    "name": f"example-{item_index}.py",
+                    "path": f"src/example-{item_index}.py",
+                    "sha": f"mock-sha{item_index:03d}",
+                    "url": f"https://github.com/mock-owner/mock-repo/blob/main/src/example-{item_index}.py",
+                    "repository": "mock-owner/mock-repo",
+                    "owner": "mock-owner",
+                    "language": language or "Python",
+                    "score": 1.0 - (i * 0.01),
+                    "text_matches": [f"mock text match {item_index}"]
+                })
+            
+            return {
+                "success": True,
+                "query": search_query,
+                "page": page,
+                "per_page": per_page,
+                "items_count": len(mock_items),
+                "items": mock_items
             }
     
     github_api = MockGitHubAPI()

@@ -31,18 +31,19 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-def get_github_repos(owner: str, per_page: int = 30) -> List[Dict[str, Any]]:
+def get_github_repos(owner: str, per_page: int = 30, page: int = 1) -> Dict[str, Any]:
     """
-    获取指定所有者的GitHub仓库列表
+    获取指定所有者的GitHub仓库列表，支持分页
     
     Args:
         owner: GitHub仓库所有者
         per_page: 每页返回的仓库数量
+        page: 页码
     
     Returns:
-        仓库列表，包含仓库元数据
+        包含仓库列表和分页信息的字典
     """
-    return github_api.list_repos(owner, per_page)
+    return github_api.list_repos(owner, per_page, page)
 
 
 @mcp.tool()
@@ -146,12 +147,29 @@ def get_github_file_history(owner: str, repo: str, path: str, per_page: int = 30
         owner: GitHub仓库所有者
         repo: 仓库名称
         path: 文件路径
-        per_page: 每页返回的版本数量
+        per_page: 每页返回的历史版本数量
     
     Returns:
         文件历史版本列表
     """
     return github_api.get_file_history(owner, repo, path, per_page)
+
+
+@mcp.tool()
+def search_github_code(query: str, language: Optional[str] = None, per_page: int = 30, page: int = 1) -> Dict[str, Any]:
+    """
+    搜索GitHub公共库中的代码
+    
+    Args:
+        query: 搜索查询字符串
+        language: 过滤特定语言（可选）
+        per_page: 每页结果数（最大100）
+        page: 页码
+    
+    Returns:
+        搜索结果，包含匹配的代码片段列表
+    """
+    return github_api.search_code(query, language, per_page, page)
 
 
 @mcp.tool()

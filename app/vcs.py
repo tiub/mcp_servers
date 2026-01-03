@@ -85,11 +85,71 @@ class VCSManager:
         if not self._validate_path(os.path.basename(repo_path)):
             raise ValueError("Invalid path for repository")
         
-        # 如果仓库已存在，先删除
-        if os.path.exists(repo_path):
-            shutil.rmtree(repo_path)
+        # 验证URL格式
+        if not url or not isinstance(url, str):
+            logger.error(f"Invalid URL format: {url}")
+            return {
+                "success": False,
+                "message": f"Invalid URL format: {url}"
+            }
+        
+        # 清理URL中的特殊字符
+        url = url.strip()
+        # 移除可能存在的反引号
+        url = url.replace('`', '')
+        # 移除可能存在的引号
+        url = url.replace('"', '').replace("'", "")
+        
+        # 如果URL不完整，尝试构建完整的URL
+        # 检查URL是否已经包含完整的owner/repo路径
+        expected_full_url = f"https://github.com/{owner}/{repo}"
+        if expected_full_url in url:
+            # URL已经包含完整的owner/repo路径，只需确保有.git后缀
+            if not url.endswith(".git"):
+                url = f"{url}.git"
+        # 1. 如果URL只是GitHub的根URL，添加owner和repo
+        elif url == "https://github.com/" or url == "https://github.com":
+            url = f"https://github.com/{owner}/{repo}.git"
+        # 2. 如果URL以/结尾，检查是否已经包含owner
+        elif url.endswith("/"):
+            if f"/{owner}/" in url or url == f"https://github.com/{owner}/":
+                # URL已经包含owner，只需添加repo
+                url = f"{url}{repo}.git"
+            else:
+                # URL不包含owner，添加owner和repo
+                url = f"{url}{owner}/{repo}.git"
+        # 3. 如果URL已经包含owner但缺少repo，添加repo
+        elif f"/{owner}" in url and url.count("/") == 3:
+            # URL格式类似 https://github.com/owner
+            url = f"{url}/{repo}.git"
+        # 4. 如果URL是完整的GitHub仓库URL但缺少.git后缀，添加后缀
+        elif "github.com" in url and not url.endswith(".git"):
+            url = f"{url}.git"
         
         try:
+            # 如果仓库已存在，先删除
+            if os.path.exists(repo_path):
+                # 使用更健壮的方式删除目录，处理权限问题
+                try:
+                    shutil.rmtree(repo_path, ignore_errors=True)
+                    # 检查是否删除成功
+                    if os.path.exists(repo_path):
+                        # 尝试使用不同的方法删除
+                        import subprocess
+                        if os.name == 'nt':  # Windows
+                            subprocess.run(['rmdir', '/s', '/q', repo_path], shell=True, check=True, capture_output=True)
+                        else:  # Linux/Mac
+                            subprocess.run(['rm', '-rf', repo_path], shell=True, check=True, capture_output=True)
+                except Exception as e:
+                    logger.error(f"Failed to delete existing repository: {e}")
+                    return {
+                        "success": False,
+                        "message": f"Failed to delete existing repository: {str(e)}",
+                        "details": {
+                            "repo_path": repo_path
+                        }
+                    }
+            
             # 克隆仓库
             clone_options = {}
             if branch:
@@ -109,13 +169,36 @@ class VCSManager:
             logger.error(f"Failed to clone repository: {e}")
             return {
                 "success": False,
-                "message": f"Failed to clone repository: {str(e)}"
+                "message": f"Failed to clone repository: {str(e)}",
+                "details": {
+                    "url": url,
+                    "owner": owner,
+                    "repo": repo,
+                    "branch": branch
+                }
+            }
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to delete existing repository using subprocess: {e}")
+            return {
+                "success": False,
+                "message": f"Failed to delete existing repository: {str(e)}",
+                "details": {
+                    "repo_path": repo_path,
+                    "output": e.stdout.decode() if e.stdout else "",
+                    "error": e.stderr.decode() if e.stderr else ""
+                }
             }
         except Exception as e:
             logger.error(f"Unexpected error while cloning repository: {e}")
             return {
                 "success": False,
-                "message": f"Unexpected error: {str(e)}"
+                "message": f"Unexpected error: {str(e)}",
+                "details": {
+                    "url": url,
+                    "owner": owner,
+                    "repo": repo,
+                    "branch": branch
+                }
             }
     
     def checkout_branch(self, owner: str, repo: str, branch: str, create: bool = False) -> Dict[str, Any]:
@@ -289,6 +372,57 @@ class VCSManager:
             }
         except Exception as e:
             logger.error(f"Unexpected error while pushing changes: {e}")
+            return {
+                "success": False,
+                "message": f"Unexpected error: {str(e)}"
+            }
+    
+    def pull_changes(self, owner: str, repo: str, branch: Optional[str] = None, rebase: bool = False) -> Dict[str, Any]:
+        """
+        从远程仓库拉取更新
+        
+        Args:
+            owner: 仓库所有者
+            repo: 仓库名称
+            branch: 要拉取的分支，默认为当前分支
+            rebase: 是否使用rebase方式拉取
+        
+        Returns:
+            Dict[str, Any]: 拉取结果
+        """
+        repo_path = self._get_repo_path(owner, repo)
+        
+        # 检查路径是否安全
+        if not self._validate_path(os.path.basename(repo_path)):
+            raise ValueError("Invalid path for repository")
+        
+        try:
+            repo = Repo(repo_path)
+            
+            # 获取要拉取的分支
+            pull_branch = branch or repo.active_branch.name
+            
+            # 拉取更新
+            if rebase:
+                repo.remotes.origin.pull(pull_branch, rebase=True)
+            else:
+                repo.remotes.origin.pull(pull_branch)
+            
+            logger.info(f"Changes pulled successfully from {pull_branch} in {repo_path}")
+            
+            return {
+                "success": True,
+                "message": f"Changes pulled successfully from {pull_branch}",
+                "branch": pull_branch
+            }
+        except GitCommandError as e:
+            logger.error(f"Failed to pull changes: {e}")
+            return {
+                "success": False,
+                "message": f"Failed to pull changes: {str(e)}"
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error while pulling changes: {e}")
             return {
                 "success": False,
                 "message": f"Unexpected error: {str(e)}"

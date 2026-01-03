@@ -243,6 +243,23 @@ def push_changes(owner: str, repo: str, branch: Optional[str] = None, force: boo
 
 
 @mcp.tool()
+def pull_changes(owner: str, repo: str, branch: Optional[str] = None, rebase: bool = False) -> Dict[str, Any]:
+    """
+    从远程仓库拉取更新
+    
+    Args:
+        owner: 仓库所有者
+        repo: 仓库名称
+        branch: 要拉取的分支，默认为当前分支
+        rebase: 是否使用rebase方式拉取
+    
+    Returns:
+        拉取结果
+    """
+    return vcs_manager.pull_changes(owner, repo, branch, rebase)
+
+
+@mcp.tool()
 def get_local_branches(owner: str, repo: str) -> List[str]:
     """
     获取本地仓库的分支列表

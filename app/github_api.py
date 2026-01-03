@@ -78,15 +78,14 @@ class GitHubAPI:
             # 获取指定所有者的用户对象
             user = self.github.get_user(owner)
             
-            # 获取仓库列表，设置per_page
+            # 获取仓库列表
             repos = user.get_repos()
-            repos.per_page = min(per_page, 100)  # GitHub API限制最大为100
             
-            # 只获取当前页的仓库，不一次性获取所有
-            current_page_repos = repos.get_page(page - 1)
+            # 设置per_page属性，限制最大为100
+            repos.per_page = min(int(per_page), 100)  # GitHub API限制最大为100
+            github_page_size = repos.per_page  # 使用实际的per_page值
             
-            # 转换为列表
-            repo_list = list(current_page_repos)
+            repo_list = repos[github_page_size * (page - 1):github_page_size * page]
             
             # 处理仓库列表
             result = []

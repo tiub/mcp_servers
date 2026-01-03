@@ -9,6 +9,11 @@ from github import Auth
 from typing import List, Optional, Dict, Any
 from app.config import settings
 import os
+import warnings
+from urllib3.exceptions import InsecureRequestWarning
+
+# 忽略SSL验证警告（仅在开发环境中使用）
+warnings.filterwarnings("ignore", category=InsecureRequestWarning)
 
 
 class GitHubAPI:
@@ -171,9 +176,33 @@ class GitHubAPI:
         Returns:
             文件内容
         """
-        repo = self.get_repo(owner, repo)
-        contents = repo.get_contents(path, ref=ref)
-        return contents.decoded_content.decode('utf-8')
+        try:
+            repo = self.get_repo(owner, repo)
+            # 只有当ref不为None时才传递ref参数
+            if ref:
+                contents = repo.get_contents(path, ref=ref)
+            else:
+                contents = repo.get_contents(path)
+            
+            # 检查是否为单个文件（而不是目录）
+            if isinstance(contents, list):
+                # 如果是目录，返回README.md文件内容（如果存在）
+                if path == "" or path == ".":
+                    # 尝试获取README.md文件
+                    for item in contents:
+                        if item.name.lower() == "readme.md":
+                            # 只有当ref不为None时才传递ref参数
+                            if ref:
+                                readme_contents = repo.get_contents(item.path, ref=ref)
+                            else:
+                                readme_contents = repo.get_contents(item.path)
+                            return readme_contents.decoded_content.decode('utf-8')
+                    raise ValueError(f"Directory '{path}' doesn't contain a README.md file")
+                raise ValueError(f"Path '{path}' is a directory, not a file")
+            
+            return contents.decoded_content.decode('utf-8')
+        except Exception as e:
+            raise ValueError(f"Failed to get file content: {str(e)}")
     
     def get_file_history(self, owner: str, repo: str, path: str, per_page: int = 30) -> List[Dict[str, Any]]:
         """

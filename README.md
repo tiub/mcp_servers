@@ -60,8 +60,8 @@ app/
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/your-username/gsmcp.git
-   cd gsmcp
+   git clone https://github.com/tiub/mcp_servers.git
+   cd mcp_servers
    ```
 
 2. Create a virtual environment and install dependencies:
@@ -206,4 +206,4 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Support
 
-For issues, questions, or feature requests, please open an issue on the [GitHub repository](https://github.com/your-username/gsmcp/issues).
+For issues, questions, or feature requests, please open an issue on the [GitHub repository](https://github.com/tiub/mcp_servers/issues).

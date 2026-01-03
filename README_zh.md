@@ -60,8 +60,8 @@ app/
 1. 克隆仓库：
 
    ```bash
-   git clone https://github.com/your-username/gsmcp.git
-   cd gsmcp
+   git clone https://github.com/tiub/mcp_servers.git
+   cd mcp_servers
    ```
 
 2. 创建虚拟环境并安装依赖：
@@ -206,4 +206,4 @@ MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
 
 ## 支持
 
-如有问题、疑问或功能请求，请在 [GitHub 仓库](https://github.com/your-username/gsmcp/issues) 上打开问题。
+如有问题、疑问或功能请求，请在 [GitHub 仓库](https://github.com/tiub/mcp_servers/issues) 上打开问题。
